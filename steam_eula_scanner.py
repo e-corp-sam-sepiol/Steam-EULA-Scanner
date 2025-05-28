@@ -2,15 +2,9 @@ import sys
 
 # ---- Dependency check and helpful error message ----
 required_modules = [
-    "requests",
-    "beautifulsoup4",
-    "tqdm",
-    "openai",
-    "PyPDF2",
-    "python_docx",
-    "striprtf"
+    "requests", "beautifulsoup4", "tqdm", "openai",
+    "PyPDF2", "python_docx", "striprtf"
 ]
-
 missing = []
 for mod in required_modules:
     try:
@@ -22,7 +16,6 @@ for mod in required_modules:
             __import__(mod)
     except ImportError:
         missing.append(mod if mod != "python_docx" else "python-docx")
-
 if missing:
     print("\nERROR: Missing dependencies detected!")
     print("To install them, run:")
@@ -44,15 +37,13 @@ import docx
 from striprtf.striprtf import rtf_to_text
 
 # ---------------- CONFIGURATION ----------------
-
-OPENAI_API_KEY = ""  # <-- Optionally paste your key here, or leave blank to use env variable
-STEAM_PATH = r"C:\Program Files (x86)\Steam"  # Change if your Steam is elsewhere
-API_DELAY = 2  # seconds between API calls
+OPENAI_API_KEY = "" # Optionally paste your key here, or leave blank to use env variable
+STEAM_PATH = r"C:\Program Files (x86)\Steam" # Change if your Steam is elsewhere
+API_DELAY = 2 # seconds between API calls
 OUTPUT_FILE = "steam_eula_privacy_report.csv"
-EULA_DUMP_FILE = "eula_dump.txt"  # File to save raw EULA texts
+EULA_DUMP_FILE = "steam_eula_dump.txt" # File to save raw EULA texts
 
 # ---------------- OPENAI CLIENT SETUP ----------------
-
 api_key = os.environ.get("OPENAI_API_KEY", OPENAI_API_KEY)
 openai_enabled = True
 if not api_key or api_key == "YOUR_OPENAI_API_KEY_HERE":
@@ -62,8 +53,106 @@ if not api_key or api_key == "YOUR_OPENAI_API_KEY_HERE":
 else:
     client = openai.OpenAI(api_key=api_key)
 
-# ---------------- WHITESPACE CLEANER ----------------
+# ---------------- ANTI-CHEAT/PRIVACY KEYWORDS ----------------
+ANTI_CHEAT_SYSTEMS = [
+    "EasyAntiCheat", "Easy Anti-Cheat", "EAC",
+    "BattlEye", "BattleEye",
+    "nProtect", "GameGuard", "nProtect GameGuard",
+    "Vanguard", "Riot Vanguard",
+    "Ricochet", "Call of Duty Ricochet",
+    "XIGNCODE", "XIGNCODE3",
+    "PunkBuster",
+    "FACEIT", "FACEIT Anti-Cheat",
+    "FairFight",
+    "Valve Anti-Cheat", "VAC",
+    "SHiELD", "SHiELD Anti-Cheat",
+    "HackShield", "AhnLab HackShield",
+    "GameShield",
+    "MShield",
+    "SGuard",
+    "CheatBuster",
+    "Warden",
+    "Sentry Anti-Cheat",
+    "uTRUST", "uTRUST Anti-Cheat",
+    "BEACON Anti-Cheat",
+    "Kakao Anti-Cheat",
+    "nProtect Anti-Cheat",
+    "Neowiz Anti-Cheat",
+    "Denuvo Anti-Cheat",
+    "Denuvo",
+    "StarForce",
+    "SecuROM",
+    "SafeDisc",
+    "Arxan",
+    "VMProtect",
+    "Themida",
+    "rootkit",
+    "Ring 0",
+    "kernel-level", "kernel mode", "kernel driver",
+    "HWID", "HWID ban"
+]
 
+GENERIC_PRIVACY_TERMS = [
+    "kernel", "system privileges", "privileged driver", "driver installation",
+    "background service", "persistent service", "process injection", "memory scanning",
+    "code injection", "anti-debug", "anti-tamper", "integrity check", "obfuscation",
+    "monitoring software", "surveillance", "third-party monitoring", "data collection",
+    "hardware ban", "device fingerprint", "telemetry", "monitoring", "driver", "elevated privileges", 
+	"admin rights", "administrator", "background process", "persistent", "ring0", "ring-0"
+]
+
+def scan_for_anti_cheat_and_privacy(text):
+    found_systems = []
+    found_generic = []
+    for kw in ANTI_CHEAT_SYSTEMS:
+        if re.search(r'\b{}\b'.format(re.escape(kw)), text, re.IGNORECASE):
+            found_systems.append(kw)
+    for kw in GENERIC_PRIVACY_TERMS:
+        if re.search(r'\b{}\b'.format(re.escape(kw)), text, re.IGNORECASE):
+            found_generic.append(kw)
+    if found_systems:
+        return "Detected: " + ", ".join(sorted(set(found_systems)))
+    elif found_generic:
+        return "No specific anti-cheat detected, but technical/privacy terms found: " + ", ".join(sorted(set(found_generic))) + ". Manual review suggested."
+    else:
+        return "No anti-cheat or concerning technical terms detected."
+
+# ---------------- PCGAMINGWIKI SCRAPER ----------------
+def get_pcgamingwiki_anti_cheat(game_name):
+    url_name = game_name.replace(" ", "_")
+    url = f"https://www.pcgamingwiki.com/wiki/{url_name}"
+    try:
+        resp = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        if resp.status_code != 200:
+            return "Not found"
+        soup = BeautifulSoup(resp.text, "html.parser")
+        ac_section = soup.find("span", {"id": "Anti-cheat"})
+        if ac_section:
+            parent = ac_section.find_parent("h2")
+            if parent:
+                content = []
+                sib = parent.find_next_sibling()
+                while sib and sib.name != "h2":
+                    content.append(sib.get_text(separator="\n", strip=True))
+                    sib = sib.find_next_sibling()
+                return "\n".join(content).strip() or "Section found, but no content."
+        # Fallback: look for keywords
+        if "anti-cheat" in resp.text.lower():
+            return "Anti-cheat mentioned, see page."
+        return "No anti-cheat info found."
+    except Exception as e:
+        return f"Error: {e}"
+
+# ---------------- FORUM/REDDIT SEARCH LINKS ----------------
+def make_reddit_search_link(game_name):
+    from urllib.parse import quote_plus
+    query = quote_plus(f"{game_name} anti-cheat")
+    return f"https://www.reddit.com/r/pcgaming/search/?q={query}&restrict_sr=1"
+
+def make_steam_forum_search_link(appid):
+    return f"https://steamcommunity.com/app/{appid}/discussions/search/?q=anti-cheat"
+
+# ---------------- WHITESPACE CLEANER ----------------
 def clean_eula_text(text):
     text = text.replace('\t', ' ')
     text = re.sub(r'[ ]{2,}', ' ', text)
@@ -73,7 +162,6 @@ def clean_eula_text(text):
     return text.strip()
 
 # ---------------- HELPER FUNCTIONS ----------------
-
 def normalize(text):
     return re.sub(r'[^a-z0-9]', '', text.lower())
 
@@ -108,19 +196,19 @@ def get_installed_games(libraries):
             try:
                 with open(mf, "r", encoding="utf-8") as f:
                     content = f.read()
-                    appid_match = re.search(r'"appid"\s+"(\d+)"', content)
-                    name_match = re.search(r'"name"\s+"([^"]+)"', content)
-                    installdir_match = re.search(r'"installdir"\s+"([^"]+)"', content)
-                    if appid_match and name_match and installdir_match:
-                        appid = appid_match.group(1)
-                        name = name_match.group(1)
-                        installdir = installdir_match.group(1)
-                        game_path = os.path.join(lib, "common", installdir)
-                        games.append({
-                            "appid": appid,
-                            "name": name,
-                            "path": game_path
-                        })
+                appid_match = re.search(r'"appid"\s+"(\d+)"', content)
+                name_match = re.search(r'"name"\s+"([^"]+)"', content)
+                installdir_match = re.search(r'"installdir"\s+"([^"]+)"', content)
+                if appid_match and name_match and installdir_match:
+                    appid = appid_match.group(1)
+                    name = name_match.group(1)
+                    installdir = installdir_match.group(1)
+                    game_path = os.path.join(lib, "common", installdir)
+                    games.append({
+                        "appid": appid,
+                        "name": name,
+                        "path": game_path
+                    })
             except Exception as e:
                 print(f"Error reading {mf}: {e}")
     return games
@@ -238,7 +326,6 @@ def get_eula_text_from_game_files(game_name, game_path):
     for pattern in patterns:
         for file in glob.glob(os.path.join(game_path, pattern), recursive=True):
             candidate_files.add(file)
-
     for file in candidate_files:
         filename = os.path.basename(file)
         file_text = extract_text_by_extension(file)
@@ -246,7 +333,6 @@ def get_eula_text_from_game_files(game_name, game_path):
             eula_texts.append((file, file_text, "filename-match"))
         elif content_matches_game(game_name, file_text):
             eula_texts.append((file, file_text, "content-match"))
-
     if not eula_texts:
         root_patterns = [
             "eula*.txt", "license*.txt", "legal*.txt",
@@ -276,7 +362,7 @@ def get_eula_text(eula_url_or_text):
                 return resp.text.strip()
         except Exception as e:
             print(f"Failed to download EULA: {e}")
-        return None
+            return None
     else:
         return eula_url_or_text
 
@@ -305,15 +391,13 @@ def analyze_eula_with_ai(eula_text):
         return "AI analysis failed", str(e)
 
 # ---------------- MAIN PROCESS ----------------
-
 def main():
     print("Scanning Steam libraries...")
     libraries = get_steam_libraries(STEAM_PATH)
     games = get_installed_games(libraries)
     print(f"Found {len(games)} installed Steam games.")
-
     results = []
-    quota_exceeded = False  # Track quota error
+    quota_exceeded = False # Track quota error
 
     # Clear the EULA dump file at the start
     with open(EULA_DUMP_FILE, "w", encoding="utf-8") as f:
@@ -323,7 +407,6 @@ def main():
         appid = game["appid"]
         name = game["name"]
         path = game["path"]
-
         app_details = get_app_details(appid)
         eula_url = None
         eula_text = None
@@ -340,7 +423,6 @@ def main():
             eula_text = get_eula_text(eula_url)
             if eula_text:
                 eula_sources.append(("Steam API/Store", eula_text, "api-or-store"))
-
         # 4. Try local files with filename/content matching
         local_eulas = get_eula_text_from_game_files(name, path)
         for file_path, text, match_type in local_eulas:
@@ -355,9 +437,41 @@ def main():
         if not eula_for_ai and eula_sources:
             eula_for_ai = eula_sources[0][1]
 
-        # Dump all found EULAs for this game, cleaned up
+        # ---- Anti-cheat/Privacy scan ----
+        anti_cheat_scan = "No EULA found"
+        if eula_for_ai:
+            anti_cheat_scan = scan_for_anti_cheat_and_privacy(eula_for_ai)
+
+        # --- PCGamingWiki anti-cheat info ---
+        pcgw_info = get_pcgamingwiki_anti_cheat(name)
+
+        # --- Forum/Reddit search links ---
+        reddit_link = make_reddit_search_link(name)
+        steam_forum_link = make_steam_forum_search_link(appid)
+
+        status, error = "No EULA found", ""
+
+        if eula_for_ai and not quota_exceeded and openai_enabled:
+            status, error = analyze_eula_with_ai(eula_for_ai)
+            if "Quota exceeded" in status or "insufficient_quota" in error:
+                print("OpenAI quota exceeded. Stopping further AI analysis, but will continue dumping EULAs.")
+                quota_exceeded = True # Don't break, just skip AI analysis
+        elif not openai_enabled:
+            status, error = "Skipped (no API key)", ""
+
+        # ---- ENHANCED DUMP: Add findings summary to EULA dump ----
         with open(EULA_DUMP_FILE, "a", encoding="utf-8") as f:
             f.write(f"-------------------- {name} --------------------\n")
+            f.write(f"AppID: {appid}\nInstall Path: {path}\n")
+            f.write(f"EULA Found: {'Yes' if eula_sources else 'No'}\n")
+            f.write(f"Privacy Assessment: {status}\n")
+            f.write(f"Anti-Cheat/Privacy Scan: {anti_cheat_scan}\n")
+            f.write(f"PCGamingWiki Info: {pcgw_info}\n")
+            f.write(f"Reddit Search: {reddit_link}\n")
+            f.write(f"Steam Forum Search: {steam_forum_link}\n")
+            if error:
+                f.write(f"Error/Notes: {error}\n")
+            f.write("\n")
             if eula_sources:
                 for src, txt, match_type in eula_sources:
                     f.write(f"[Source: {src} | Match: {match_type}]\n")
@@ -367,22 +481,20 @@ def main():
             else:
                 f.write("[No EULA found]\n\n")
 
-        status, error = "No EULA found", ""
-        if eula_for_ai and not quota_exceeded and openai_enabled:
-            status, error = analyze_eula_with_ai(eula_for_ai)
-            if "Quota exceeded" in status or "insufficient_quota" in error:
-                print("OpenAI quota exceeded. Stopping further AI analysis, but will continue dumping EULAs.")
-                quota_exceeded = True  # Don't break, just skip AI analysis
-        elif not openai_enabled:
-            status, error = "Skipped (no API key)", ""
+        results.append([
+            appid, name, path, "Yes" if eula_sources else "No", status,
+            anti_cheat_scan, pcgw_info, reddit_link, steam_forum_link, error
+        ])
 
-        results.append([appid, name, path, "Yes" if eula_sources else "No", status, error])
         time.sleep(API_DELAY)
 
     # Write results to CSV
     with open(OUTPUT_FILE, "w", newline='', encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["App ID", "Game Name", "Install Path", "EULA Found", "Privacy Assessment", "Error/Notes"])
+        writer.writerow([
+            "App ID", "Game Name", "Install Path", "EULA Found", "Privacy Assessment",
+            "Anti-Cheat/Privacy Scan", "PCGamingWiki Info", "Reddit Search", "Steam Forum Search", "Error/Notes"
+        ])
         writer.writerows(results)
 
     print(f"\nDone! Results saved to {OUTPUT_FILE}")
