@@ -1,6 +1,6 @@
 # Steam EULA Privacy Scanner
 
-This script helps you find, collect, and review the End User License Agreements (EULAs) and similar legal documents for all your installed Steam games. It’s designed for privacy-conscious gamers, researchers, and anyone who wants to know exactly what legal terms and privacy policies come with the games they own.
+This Python script helps you find, collect, and review the End User License Agreements (EULAs) and similar legal documents for all your installed Steam games. It’s designed for privacy-conscious gamers, researchers, and anyone who wants to know exactly what legal terms and privacy policies come with the games they own.
 
 ## What Does It Do?
 
